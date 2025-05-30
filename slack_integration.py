@@ -1,122 +1,121 @@
 """
-Manages Slack API connection, app initialization, and event handling registration
-for the moderation bot.
+モデレーションボットのSlack API接続、アプリ初期化、およびイベント処理登録を管理します。
 
-This module provides functions to:
-- Create and configure a Slack Bolt App instance.
-- Register handlers for Slack message events.
+このモジュールは以下の機能を提供します:
+- Slack Boltアプリインスタンスの作成と設定。
+- Slackメッセージイベントのハンドラ登録。
 """
 import logging
 from slack_bolt import App
-# SLACK_APP_TOKEN is imported for the __main__ block example, not directly by core functions here.
+# SLACK_APP_TOKENは、ここのコア関数ではなく、__main__ブロックの例のためにインポートされます。
 from config import SLACK_BOT_TOKEN, SLACK_APP_TOKEN 
 
 logger = logging.getLogger(__name__)
 
 def create_slack_app():
     """
-    Initializes and returns a Slack Bolt App instance.
+    Slack Boltアプリインスタンスを初期化して返します。
 
-    This function relies on the `SLACK_BOT_TOKEN` being available in the application's
-    configuration (loaded via `config.py`). The Bolt App instance is the central
-    object for interacting with the Slack API (e.g., receiving events, sending messages).
+    この関数は、アプリケーションの設定（`config.py`経由で読み込まれる）で
+    `SLACK_BOT_TOKEN`が利用可能であることに依存しています。Boltアプリインスタンスは、
+    Slack APIとのやり取り（イベント受信、メッセージ送信など）を行う中心的なオブジェクトです。
 
     Returns:
-        slack_bolt.App: An initialized instance of the Slack Bolt App.
-                        Returns None if SLACK_BOT_TOKEN is not configured, although
-                        config.py should raise a ValueError before this happens.
+        slack_bolt.App: 初期化されたSlack Boltアプリのインスタンス。
+                        SLACK_BOT_TOKENが設定されていない場合はNoneを返しますが、
+                        その前にconfig.pyがValueErrorを発生させるはずです。
     """
     if not SLACK_BOT_TOKEN:
-        # This check is a safeguard. config.py is expected to raise a ValueError
-        # if SLACK_BOT_TOKEN is missing, which would halt execution before this point.
-        logger.critical("SLACK_BOT_TOKEN is not configured. Cannot create Slack app.")
+        # このチェックは安全策です。config.pyはSLACK_BOT_TOKENが欠落している場合、
+        # ValueErrorを発生させ、実行をこのポイントより前に停止することが期待されます。
+        logger.critical("SLACK_BOT_TOKENが設定されていません。Slackアプリを作成できません。")
         return None
     
-    # Initialize the Slack Bolt App with the bot token.
+    # Slack Boltアプリをボットトークンで初期化します。
     app = App(token=SLACK_BOT_TOKEN)
-    logger.info("Slack Bolt App initialized successfully with SLACK_BOT_TOKEN.")
+    logger.info("SLACK_BOT_TOKENを使用してSlack Boltアプリが正常に初期化されました。")
     return app
 
 def register_message_handler(app: App, handler_function):
     """
-    Registers a given function to handle incoming Slack message events.
+    指定された関数をSlackの受信メッセージイベントを処理するために登録します。
 
-    This function uses the `@app.message("")` decorator pattern from Slack Bolt
-    to listen to all messages in channels where the bot is present. The provided
-    `handler_function` will be called when a new message is received.
+    この関数は、Slack Boltの`@app.message("")`デコレータパターンを使用して、
+    ボットが存在するチャンネルのすべてのメッセージをリッスンします。提供された
+    `handler_function`は、新しいメッセージが受信されたときに呼び出されます。
 
     Args:
-        app (slack_bolt.App): The initialized Slack Bolt App instance to register the handler with.
-        handler_function (callable): The function to be executed when a message event occurs.
-                                     This function should typically accept `message` and `say`
-                                     arguments, as provided by Slack Bolt.
+        app (slack_bolt.App): ハンドラを登録する初期化済みSlack Boltアプリインスタンス。
+        handler_function (callable): メッセージイベント発生時に実行される関数。
+                                     この関数は通常、Slack Boltによって提供される
+                                     `message`および`say`引数を受け入れる必要があります。
     """
     if not app:
-        logger.error("Slack app instance is None. Cannot register message handler.")
+        logger.error("SlackアプリインスタンスがNoneです。メッセージハンドラを登録できません。")
         return
 
-    # The @app.message("") decorator listens to all non-subtype messages.
-    # An empty string "" as the pattern matches all messages.
-    # Slack Bolt passes 'message' (payload) and 'say' (utility function) to the wrapped handler.
+    # @app.message("")デコレータは、すべての非サブタイプメッセージをリッスンします。
+    # パターンとして空文字列""はすべてのメッセージに一致します。
+    # Slack Boltは、ラップされたハンドラに'message'（ペイロード）と'say'（ユーティリティ関数）を渡します。
     @app.message("") 
     def message_wrapper(message, say):
-        # This wrapper ensures that any exceptions within the user-provided handler_function
-        # are caught and logged, preventing them from crashing the main app event loop.
+        # このラッパーは、ユーザー提供のhandler_function内で発生した例外をキャッチしてログに記録し、
+        # メインアプリのイベントループがクラッシュするのを防ぎます。
         try:
             handler_function(message, say)
         except Exception as e:
-            logger.exception(f"Error occurred in the registered message handler: {e}")
-            # Optionally, could send a generic error message to Slack via `say` if appropriate,
-            # but be cautious of error loops or revealing too much detail.
+            logger.exception(f"登録されたメッセージハンドラでエラーが発生しました：{e}")
+            # オプションで、適切であれば`say`経由でSlackに一般的なエラーメッセージを送信することもできますが、
+            # エラーループや詳細の過度の公開には注意してください。
             # try:
-            #     say(text="An unexpected error occurred while processing your message. The admin has been notified.")
+            #     say(text="メッセージ処理中に予期しないエラーが発生しました。管理者に通知されました。")
             # except Exception as say_error:
-            #     logger.error(f"Failed to send error message to Slack channel: {say_error}")
+            #     logger.error(f"Slackチャンネルへのエラーメッセージ送信に失敗しました：{say_error}")
 
-    logger.info(f"Message handler '{handler_function.__name__}' registered successfully to listen to all messages.")
+    logger.info(f"メッセージハンドラ '{handler_function.__name__}' がすべてのメッセージをリッスンするために正常に登録されました。")
 
 
-# This block is for basic validation or direct testing of this module's functions.
-# It's not intended for running the full application (that's done via app.py).
+# このブロックは、このモジュールの関数の基本的な検証または直接テスト用です。
+# 完全なアプリケーションの実行を目的としたものではありません（それはapp.py経由で行われます）。
 if __name__ == "__main__":
-    # Ensure config.py is loaded to set up logging and make environment variables available.
+    # config.pyが読み込まれ、ロギングが設定され、環境変数が利用可能になるようにします。
     try:
-        import config # This will execute config.py, including logging setup and env var loading.
-        logger.info("Config module loaded successfully for slack_integration.py direct execution.")
+        import config # これにより、ロギング設定や環境変数読み込みを含むconfig.pyが実行されます。
+        logger.info("slack_integration.pyの直接実行用にconfigモジュールが正常に読み込まれました。")
     except ValueError as e:
-        # This typically happens if essential API keys are missing in .env or environment.
-        logger.critical(f"Failed to load config due to missing environment variables: {e}")
-        logger.warning("Cannot run slack_integration.py __main__ block without essential API keys.")
-        exit(1) # Exit because the module's functions might not behave as expected.
+        # これは通常、.envまたは環境に不可欠なAPIキーが欠落している場合に発生します。
+        logger.critical(f"環境変数の欠落によりconfigの読み込みに失敗しました：{e}")
+        logger.warning("不可欠なAPIキーなしではslack_integration.pyの__main__ブロックを実行できません。")
+        exit(1) # モジュールの関数が期待通りに動作しない可能性があるため終了します。
 
-    logger.info("--- Slack Integration Direct Test ---")
-    logger.info("Attempting to initialize Slack App for basic check...")
+    logger.info("--- Slack Integration Direct Test ---") # Slack統合ダイレクトテスト
+    logger.info("基本的なチェックのためにSlackアプリの初期化を試みています...")
     
-    # Check if SLACK_BOT_TOKEN is available (it should be, due to config.py import).
+    # SLACK_BOT_TOKENが利用可能かどうかを確認します（config.pyのインポートにより利用可能であるはずです）。
     if not SLACK_BOT_TOKEN:
-        logger.error("SLACK_BOT_TOKEN is still not found after config import. This should not happen if config is correct.")
+        logger.error("configインポート後もSLACK_BOT_TOKENが見つかりません。configが正しければこれは発生しないはずです。")
     else:
-        # Test creating the app instance.
+        # アプリインスタンスの作成をテストします。
         app_instance = create_slack_app()
         if app_instance:
-            logger.info("slack_integration.create_slack_app() executed successfully in __main__.")
+            logger.info("slack_integration.create_slack_app()が__main__で正常に実行されました。")
             
-            # Dummy handler for testing registration
+            # 登録テスト用のダミーハンドラ
             def _dummy_test_handler(message, say):
-                logger.info(f"__main__ _dummy_test_handler called with message: {message.get('text')}")
+                logger.info(f"__main__の_dummy_test_handlerがメッセージで呼び出されました：{message.get('text')}")
             
             register_message_handler(app_instance, _dummy_test_handler)
-            logger.info("slack_integration.register_message_handler() called in __main__.")
-            logger.info("Note: This does not start the Slack connection or event listeners.")
-            logger.info("To run the full bot and connect to Slack, execute app.py.")
+            logger.info("slack_integration.register_message_handler()が__main__で呼び出されました。")
+            logger.info("注意：これはSlack接続やイベントリスナーを開始しません。")
+            logger.info("完全なボットを実行してSlackに接続するには、app.pyを実行してください。")
 
-            # If SLACK_APP_TOKEN is also set, one could theoretically start SocketModeHandler here for a deeper test,
-            # but that would make this script block and try to connect to Slack.
+            # SLACK_APP_TOKENも設定されている場合、理論的にはここでSocketModeHandlerを開始してより詳細なテストを行うことができますが、
+            # それはこのスクリプトをブロックし、Slackへの接続を試みます。
             if SLACK_APP_TOKEN:
-                logger.info("SLACK_APP_TOKEN is also configured.")
-                logger.info("For a full test with SocketModeHandler, run app.py.")
+                logger.info("SLACK_APP_TOKENも設定されています。")
+                logger.info("SocketModeHandlerを使用した完全なテストについては、app.pyを実行してください。")
             else:
-                logger.warning("SLACK_APP_TOKEN is not configured. Full app execution via app.py would require it for Socket Mode.")
+                logger.warning("SLACK_APP_TOKENが設定されていません。app.py経由での完全なアプリ実行にはソケットモードのためにそれが必要です。")
         else:
-            logger.error("Failed to create Slack App instance in __main__ direct execution.")
-    logger.info("--- End of Slack Integration Direct Test ---")
+            logger.error("__main__の直接実行でSlackアプリインスタンスの作成に失敗しました。")
+    logger.info("--- End of Slack Integration Direct Test ---") # Slack統合ダイレクトテスト終了

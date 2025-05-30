@@ -1,240 +1,241 @@
 """
-Main application file for the Slack Moderation Bot.
+Slackモデレーションボットのメインアプリケーションファイルです。
 
-This script initializes the Slack Bolt app, sets up message handlers,
-and starts the Socket Mode handler to listen for Slack events.
-It integrates with OpenAI for content moderation and sends notifications
-based on the moderation results.
+このスクリプトは、Slack Boltアプリを初期化し、メッセージハンドラを設定し、
+Socket Modeハンドラを開始してSlackイベントをリッスンします。
+コンテンツモデレーションのためにOpenAIと統合し、モデレーション結果に基づいて
+通知を送信します。
 """
 import logging
 
-# Import config module first. This is crucial as config.py initializes logging
-# and loads all environment variables which are then available for other modules.
+# 最初にconfigモジュールをインポートします。これは、config.pyがロギングを初期化し、
+# 他のモジュールで利用可能になるすべての環境変数を読み込むため、非常に重要です。
 import config 
 
-# Imports from Slack Bolt library for Slack integration.
+# Slack統合のためのSlack Boltライブラリからのインポート。
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-# Imports from local application modules.
-# These modules rely on configurations loaded by the 'config' import above.
+# ローカルアプリケーションモジュールからのインポート。
+# これらのモジュールは、上記の'config'インポートによって読み込まれた設定に依存しています。
 from config import (
-    # SLACK_BOT_TOKEN is used by create_slack_app internally via config.
-    SLACK_APP_TOKEN,      # Required for SocketModeHandler.
-    OPENAI_API_KEY,       # Checked here to ensure it was loaded, vital for moderation.
-    HARASSMENT_CATEGORIES,# List of categories to check from OpenAI moderation.
-    SLACK_NOTIFICATION_CHANNEL_ID # Optional channel for notifications.
+    # SLACK_BOT_TOKENは、config経由でcreate_slack_appによって内部的に使用されます。
+    SLACK_APP_TOKEN,      # SocketModeHandlerに必要です。
+    OPENAI_API_KEY,       # モデレーションに不可欠であり、ここで読み込まれたことを確認します。
+    HARASSMENT_CATEGORIES,# OpenAIモデレーションからチェックするカテゴリのリスト。
+    SLACK_NOTIFICATION_CHANNEL_ID # 通知用のオプションチャネル。
 )
 from slack_integration import create_slack_app, register_message_handler
 from openai_integration import moderate_text
 
 
-# Get a logger instance for this module (app.py).
-# Logging configuration (level, format) is already set by config.py.
+# このモジュール（app.py）用のロガーインスタンスを取得します。
+# ロギング設定（レベル、フォーマット）は既にconfig.pyによって設定されています。
 logger = logging.getLogger(__name__)
 
-# Initialize the Slack Bolt App instance using the function from slack_integration.
-# This function internally uses SLACK_BOT_TOKEN from config.py.
-# The 'app' object is central to handling Slack events and API calls.
+# slack_integrationの関数を使用してSlack Boltアプリインスタンスを初期化します。
+# この関数は内部的にconfig.pyのSLACK_BOT_TOKENを使用します。
+# 'app'オブジェクトは、SlackイベントとAPI呼び出しを処理する中心的なものです。
 app = create_slack_app() 
 
 if not app:
-    # This condition signifies a critical failure in initializing the Slack App,
-    # likely due to SLACK_BOT_TOKEN not being configured (though config.py should catch this).
-    # The application cannot proceed without a valid 'app' instance.
+    # この状態は、Slackアプリの初期化における重大な失敗を示しており、
+    # おそらくSLACK_BOT_TOKENが設定されていないためです（ただし、config.pyがこれをキャッチするはずです）。
+    # 有効な'app'インスタンスなしではアプリケーションは続行できません。
     logger.critical(
-        "CRITICAL ERROR: Slack App (app object) could not be initialized. "
-        "This often means SLACK_BOT_TOKEN is missing or invalid. Application cannot start."
+        "重大なエラー：Slackアプリ（appオブジェクト）を初期化できませんでした。"
+        "これは多くの場合、SLACK_BOT_TOKENが欠落しているか無効であることを意味します。アプリケーションを開始できません。"
     )
-    # Consider exiting if in a production scenario: exit(1)
-    # config.py already raises ValueError for missing essential keys, which should stop execution.
+    # 本番シナリオでは終了を検討してください：exit(1)
+    # config.pyは既に不可欠なキーの欠落に対してValueErrorを発生させており、これにより実行が停止するはずです。
 
 
 def message_moderation_handler(message: dict, say: callable):
     """
-    Processes incoming Slack messages, moderates their text using OpenAI,
-    and sends notifications if specific harassment categories are detected.
+    受信したSlackメッセージを処理し、OpenAIを使用してそのテキストをモデレートし、
+    特定のハラスメントカテゴリが検出された場合に通知を送信します。
 
-    This function is registered as a message handler with the Slack Bolt app.
+    この関数は、Slack Boltアプリのメッセージハンドラとして登録されます。
 
     Args:
-        message (dict): The Slack message event payload. This dictionary contains
-                        details about the message, sender, channel, etc.
-        say (callable): A utility function provided by Slack Bolt to send messages
-                        back to the channel where the incoming message was received.
-                        It can also be used to reply in a thread.
+        message (dict): Slackメッセージイベントのペイロード。この辞書には、
+                        メッセージ、送信者、チャンネルなどの詳細が含まれています。
+        say (callable): 受信メッセージが受信されたチャンネルにメッセージを返信するために
+                        Slack Boltによって提供されるユーティリティ関数。
+                        スレッドでの返信にも使用できます。
     
     Interactions:
-    - Calls `openai_integration.moderate_text` to get moderation analysis.
-    - Checks the result against `HARASSMENT_CATEGORIES` from `config.py`.
-    - Sends notifications using `say` (for threaded replies or same-channel messages)
-      or `app.client.chat_postMessage` (for a dedicated notification channel,
-      if `SLACK_NOTIFICATION_CHANNEL_ID` is configured).
+    - `openai_integration.moderate_text`を呼び出してモデレーション分析を取得します。
+    - 結果を`config.py`の`HARASSMENT_CATEGORIES`と照合します。
+    - `say`（スレッド返信または同一チャンネルメッセージ用）または
+      `app.client.chat_postMessage`（専用通知チャンネル用、
+      `SLACK_NOTIFICATION_CHANNEL_ID`が設定されている場合）を使用して通知を送信します。
     """
-    # Extract the text content and user ID from the message payload.
-    # Provide defaults for logging in case these fields are unexpectedly missing.
+    # メッセージペイロードからテキストコンテンツとユーザーIDを抽出します。
+    # これらのフィールドが予期せず欠落している場合に備えて、ロギング用のデフォルト値を提供します。
     text_to_moderate = message.get('text')
     user_id = message.get('user', 'UnknownUser') 
-    message_id = message.get('client_msg_id', 'UnknownMsgId') # Unique ID for the message, useful for logging.
-    channel_id = message.get('channel', 'UnknownChannel')     # ID of the channel where the message was posted.
-    message_ts = message.get('ts')                            # Timestamp of the message, used for threading replies.
+    message_id = message.get('client_msg_id', 'UnknownMsgId') # メッセージの一意のID。ロギングに役立ちます。
+    channel_id = message.get('channel', 'UnknownChannel')     # メッセージが投稿されたチャンネルのID。
+    message_ts = message.get('ts')                            # メッセージのタイムスタンプ。スレッド返信に使用します。
 
-    # If there's no text in the message (e.g., an attachment-only message, or certain event types), skip processing.
+    # メッセージにテキストがない場合（例：添付ファイルのみのメッセージ、または特定のイベントタイプ）、処理をスキップします。
     if not text_to_moderate:
         logger.debug(
-            f"Skipping message (ID: {message_id}) from user {user_id} in channel {channel_id} "
-            "as it contains no text to moderate."
+            f"メッセージ（ID: {message_id}）をユーザー {user_id}（チャンネル: {channel_id}）からスキップします。"
+            "モデレートするテキストが含まれていません。"
         )
         return
 
     logger.info(
-        f"Moderating message (ID: {message_id}) from user <@{user_id}> in channel <#{channel_id}>. "
-        f"Text: \"{text_to_moderate[:100]}...\"" # Log a snippet of the message.
+        f"メッセージ（ID: {message_id}）をユーザー <@{user_id}>（チャンネル: <#{channel_id}>）からモデレート中。"
+        f"テキスト：「{text_to_moderate[:100]}...」" # メッセージの一部をログに記録します。
     )
 
-    # Call the OpenAI moderation API via the wrapper function in openai_integration.
+    # openai_integrationのラッパー関数を介してOpenAIモデレーションAPIを呼び出します。
     moderation_result = moderate_text(text_to_moderate)
 
-    # If the moderation call fails (e.g., API error, network issue), moderate_text returns None.
+    # モデレーション呼び出しが失敗した場合（例：APIエラー、ネットワークの問題）、moderate_textはNoneを返します。
     if moderation_result is None:
         logger.error(
-            f"OpenAI Moderation API call failed for message ID {message_id} "
-            f"from user <@{user_id}> in channel <#{channel_id}>. "
-            f"Original text: \"{text_to_moderate[:100]}...\""
+            f"OpenAI Moderation APIの呼び出しがメッセージID {message_id}（ユーザー: <@{user_id}>、チャンネル: <#{channel_id}>）で失敗しました。"
+            f"元のテキスト：「{text_to_moderate[:100]}...」"
         )
-        # Optionally, you could inform the user or channel about the error, but be cautious.
-        # e.g., say(text=f"Sorry <@{user_id}>, I couldn't process your message due to a moderation system error.")
+        # オプションで、ユーザーまたはチャンネルにエラーについて通知することもできますが、注意が必要です。
+        # 例：say(text=f"申し訳ありません、<@{user_id}>さん。モデレーションシステムのエラーのため、メッセージを処理できませんでした。")
         return
 
-    # Collect categories that were flagged as True by OpenAI and are in our HARASSMENT_CATEGORIES list.
+    # OpenAIによってTrueとフラグ付けされ、かつHARASSMENT_CATEGORIESリストに含まれるカテゴリを収集します。
     detected_categories = []
-    # The OpenAI SDK's moderation result object has a 'categories' attribute,
-    # which itself has boolean attributes for each category (e.g., categories.harassment).
-    # HARASSMENT_CATEGORIES in config.py stores these as underscore_separated strings.
+    # OpenAI SDKのモデレーション結果オブジェクトには「categories」属性があり、
+    # それ自体が各カテゴリのブール属性を持っています（例：categories.harassment）。
+    # config.pyのHARASSMENT_CATEGORIESはこれらをアンダースコア区切りの文字列として保存します。
     for category_name in HARASSMENT_CATEGORIES: 
-        # Use getattr to safely access the category attribute on the moderation_result.categories object.
-        # Defaults to False if the category_name attribute doesn't exist for some reason.
+        # getattrを使用して、moderation_result.categoriesオブジェクトのカテゴリ属性に安全にアクセスします。
+        # 何らかの理由でcategory_name属性が存在しない場合は、デフォルトでFalseになります。
         if getattr(moderation_result.categories, category_name, False):
-            # Convert underscore_style back to slash/style for display if desired, or keep as is.
+            # 必要に応じて、アンダースコアスタイルをスラッシュスタイルに戻して表示するか、そのままにします。
             detected_categories.append(category_name.replace('_', '/')) 
 
-    # If any of our specified harassment categories were detected:
+    # 指定したハラスメントカテゴリのいずれかが検出された場合：
     if detected_categories:
-        display_categories = ', '.join(detected_categories) # Format for the notification message.
+        display_categories = ', '.join(detected_categories) # 通知メッセージ用にフォーマットします。
         
-        # Construct a direct Slack link to the original message.
-        original_message_link = "original message (link unavailable)"
+        # 元のメッセージへの直接Slackリンクを構築します。
+        original_message_link = "元のメッセージ（リンク利用不可）"
         if channel_id != 'UnknownChannel' and message_ts:
             original_message_link = f"slack://channel/{channel_id}/p{message_ts.replace('.', '')}"
 
-        # Prepare the notification text.
+        # 通知テキストを準備します。日本語でより明確な構造化されたアプローチを使用します。
         notification_text = (
-            f":warning: Message from <@{user_id}> in <#{channel_id}> flagged for: *{display_categories}*.\n"
-            f"> Original message: <{original_message_link}>\n" # Link to the original message.
-            f"> _{text_to_moderate}_" # Quote the original message text.
+            f":warning: 不適切な可能性のあるメッセージが検出されました。\n"
+            f"ユーザー: <@{user_id}>\n"
+            f"チャンネル: <#{channel_id}>\n"
+            f"検出カテゴリ: *{display_categories}*\n"
+            f"元のメッセージへのリンク: <{original_message_link}>\n"
+            f"メッセージ内容:\n> _{text_to_moderate}_"
         )
         
         logger.info(
-            f"Message (ID: {message_id}) from <@{user_id}> in <#{channel_id}> flagged for: {display_categories}. "
-            "Sending notification."
+            f"メッセージ（ID: {message_id}）がユーザー <@{user_id}>（チャンネル: <#{channel_id}>）からカテゴリ「{display_categories}」でフラグ付けされました。"
+            "通知を送信しています。"
         )
         try:
-            # If a specific notification channel is configured, send the message there.
+            # 特定の通知チャンネルが設定されている場合は、そこにメッセージを送信します。
             if SLACK_NOTIFICATION_CHANNEL_ID:
                 logger.info(
-                    f"Sending notification for message ID {message_id} to dedicated channel: {SLACK_NOTIFICATION_CHANNEL_ID}"
+                    f"メッセージID {message_id} の通知を専用チャンネル（{SLACK_NOTIFICATION_CHANNEL_ID}）に送信しています。"
                 )
-                # Use app.client.chat_postMessage for sending to a specific channel.
-                # This requires the 'chat:write' bot scope.
+                # 特定のチャンネルへの送信にはapp.client.chat_postMessageを使用します。
+                # これには「chat:write」ボットスコープが必要です。
                 app.client.chat_postMessage(
                     channel=SLACK_NOTIFICATION_CHANNEL_ID,
                     text=notification_text
                 )
             else:
-                # If no dedicated channel, reply in a thread to the original message (or just in channel if no ts).
-                reply_target_log = f"channel {channel_id}"
+                # 専用チャンネルがない場合は、元のメッセージのスレッドに返信します（またはtsがない場合は単にチャンネルに）。
+                reply_target_log = f"チャンネル {channel_id}"
                 if message_ts:
-                    reply_target_log = f"thread {message_ts} in channel {channel_id}"
+                    reply_target_log = f"チャンネル {channel_id} のスレッド {message_ts}"
 
                 logger.info(
-                    f"Replying in {reply_target_log} for message ID {message_id}."
+                    f"メッセージID {message_id} のために {reply_target_log} に返信しています。"
                 )
                 if not message_ts: 
                      logger.warning(
-                         f"Message (ID: {message_id}) from user {user_id} is missing 'ts' (timestamp). "
-                         "Cannot reply in thread. Sending notification directly to channel."
+                         f"メッセージ（ID: {message_id}）がユーザー {user_id} から「ts」（タイムスタンプ）が欠落しています。"
+                         "スレッドに返信できません。通知を直接チャンネルに送信します。"
                      )
-                     say(text=notification_text) # Send to channel if no 'ts' (e.g. for some event types)
+                     say(text=notification_text) # 'ts'がない場合はチャンネルに送信します（例：一部のイベントタイプ）。
                 else:
-                     say(text=notification_text, thread_ts=message_ts) # Reply in thread.
-            logger.info(f"Successfully sent moderation notification for user <@{user_id}> (message ID: {message_id}).")
+                     say(text=notification_text, thread_ts=message_ts) # スレッドに返信します。
+            logger.info(f"ユーザー <@{user_id}>（メッセージID: {message_id}）へのモデレーション通知を正常に送信しました。")
         except Exception as e:
             logger.exception(
-                f"Error sending Slack notification for message ID {message_id} "
-                f"from user <@{user_id}>: {e}"
+                f"ユーザー <@{user_id}>（メッセージID: {message_id}）へのSlack通知送信中にエラーが発生しました：{e}"
             )
     else:
-        # Log if the message was flagged by OpenAI overall but not for any of our specified categories.
-        # This helps in understanding if HARASSMENT_CATEGORIES list needs adjustment.
-        openai_flag_status_log = "flagged by OpenAI" if moderation_result.flagged else "clean"
+        # メッセージがOpenAIによって全体的にフラグ付けされたが、指定したローカルカテゴリのいずれにも該当しなかった場合にログを記録します。
+        # これは、HARASSMENT_CATEGORIESリストの調整が必要かどうかを理解するのに役立ちます。
+        openai_flag_status_log = "OpenAIによってフラグ付けされました" if moderation_result.flagged else "クリーン"
         if moderation_result.flagged:
             all_openai_flagged_categories = [
                 cat.replace('_', '/') for cat, val in moderation_result.categories.__dict__.items() if val
             ]
             details = (
-                f"(OpenAI overall_flagged: {moderation_result.flagged}. "
-                f"OpenAI Categories: {all_openai_flagged_categories if all_openai_flagged_categories else 'None specific'})"
+                f"（OpenAI overall_flagged: {moderation_result.flagged}。"
+                f" OpenAIカテゴリ：{all_openai_flagged_categories if all_openai_flagged_categories else '特定のものなし'}）"
             )
         else:
-            details = f"(OpenAI overall_flagged: {moderation_result.flagged})"
+            details = f"（OpenAI overall_flagged: {moderation_result.flagged}）"
             
         logger.info(
-            f"Message (ID: {message_id}) from <@{user_id}> in <#{channel_id}> determined {openai_flag_status_log} "
-            f"and not matching local HARASSMENT_CATEGORIES. {details} "
-            f"Text: \"{text_to_moderate[:50]}...\""
+            f"メッセージ（ID: {message_id}）がユーザー <@{user_id}>（チャンネル: <#{channel_id}>）からローカルポリシーによって「{openai_flag_status_log}」と判断されました。"
+            f"{details} "
+            f"テキスト：「{text_to_moderate[:50]}...」"
         )
 
 
-# Register the message_moderation_handler with the Slack app instance.
-# This tells the app to call this function whenever a new message event is received.
+# Slackアプリインスタンスにmessage_moderation_handlerを登録します。
+# これにより、新しいメッセージイベントが受信されるたびにこの関数を呼び出すようアプリに指示します。
 if app:
     register_message_handler(app, message_moderation_handler)
 else:
-    # This case should ideally be prevented by earlier checks or errors in config.py/create_slack_app.
+    # このケースは、理想的にはconfig.py/create_slack_appでの以前のチェックまたはエラーによって防止されるべきです。
     logger.critical(
-        "CRITICAL ERROR: Slack app object is None. Cannot register message handler. Application will not process messages."
+        "重大なエラー：SlackアプオブジェクトがNoneです。メッセージハンドラを登録できません。アプリケーションはメッセージを処理しません。"
     )
 
-# This block executes only if the script is run directly (e.g., `python app.py`).
+# このブロックは、スクリプトが直接実行された場合（例：`python app.py`）にのみ実行されます。
 if __name__ == "__main__":
-    logger.info("Starting Slack Moderation Bot application...")
+    logger.info("Slackモデレーションボットアプリケーションを開始しています...")
     
-    # Perform final checks before starting.
-    # Essential API keys (SLACK_BOT_TOKEN, OPENAI_API_KEY) are validated in config.py.
-    # SLACK_APP_TOKEN is also validated in config.py as it's essential for SocketModeHandler.
+    # 開始前に最終チェックを実行します。
+    # 不可欠なAPIキー（SLACK_BOT_TOKEN、OPENAI_API_KEY）はconfig.pyで検証されます。
+    # SLACK_APP_TOKENも、SocketModeHandlerに不可欠であるため、config.pyで検証されます。
     if not app:
-        # This is a final safeguard. If 'app' is None here, it means create_slack_app() failed.
+        # これは最終的な安全策です。ここで「app」がNoneの場合、create_slack_app()が失敗したことを意味します。
         logger.critical(
-            "Application cannot start: Slack app instance ('app') is not initialized. "
-            "Check previous logs for errors, especially regarding SLACK_BOT_TOKEN."
+            "アプリケーションを開始できません：Slackアプリインスタンス（「app」）が初期化されていません。"
+            "以前のログ、特にSLACK_BOT_TOKENに関するエラーを確認してください。"
         )
-    # SLACK_APP_TOKEN is specifically required by SocketModeHandler.
-    # config.py should have already raised an error if it's missing.
+    # SLACK_APP_TOKENはSocketModeHandlerに特に必要です。
+    # config.pyは、欠落している場合に既にエラーを発生させているはずです。
     elif not SLACK_APP_TOKEN: 
         logger.critical(
-            "Application cannot start: SLACK_APP_TOKEN is not configured. "
-            "SocketModeHandler requires it. Check .env file or environment variables."
+            "アプリケーションを開始できません：SLACK_APP_TOKENが設定されていません。"
+            "SocketModeHandlerにはそれが必要です。.envファイルまたは環境変数を確認してください。"
         )
     else:
-        logger.info("Slack Bot Token, App Token, and OpenAI API Key are configured.")
-        logger.info("Attempting to start Slack SocketModeHandler...")
+        logger.info("Slackボットトークン、アプリトークン、およびOpenAI APIキーが設定されています。")
+        logger.info("Slack SocketModeHandlerの開始を試みています...")
         try:
-            # Start the Socket Mode handler. This connects to Slack and begins listening for events.
-            # It's a blocking call, so it will keep the application running.
+            # Socket Modeハンドラを開始します。これによりSlackに接続し、イベントのリッスンを開始します。
+            # これはブロッキング呼び出しなので、アプリケーションを実行し続けます。
             SocketModeHandler(app, SLACK_APP_TOKEN).start()
         except Exception as e:
-            # Log critical errors that prevent the SocketModeHandler from starting.
-            logger.critical(f"FATAL: Failed to start SocketModeHandler: {e}", exc_info=True)
+            # SocketModeHandlerの開始を妨げる重大なエラーをログに記録します。
+            logger.critical(f"致命的：SocketModeHandlerの開始に失敗しました：{e}", exc_info=True)
             logger.critical(
-                "Ensure SLACK_APP_TOKEN is correct and the Slack App is configured for Socket Mode in its settings. "
-                "Also check network connectivity."
+                "SLACK_APP_TOKENが正しいこと、およびSlackアプリがその設定でソケットモード用に設定されていることを確認してください。"
+                "また、ネットワーク接続も確認してください。"
             )
